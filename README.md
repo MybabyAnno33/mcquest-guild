@@ -15,7 +15,7 @@ mcquest-guild/
 └── scripts/
     ├── build_settlement.py       # 结算卡本地生成脚本（仅标准库，无网络/MCP）
     ├── test-data-No001.json      # 悬赏 No.001 实测样例数据（脚本输入）
-    └── test_build_settlement_exceptions.py  # 脚本异常输入测试 harness（8 场景）
+    └── test_build_settlement_exceptions.py  # 脚本异常输入测试 harness（17 项独立检查）
 ```
 
 注：工作目录中的 `assets/settlement-card-test-No001.html` 与 `assets/settlement-card-generated-No001.html` 为开发测试产物，已通过 `.gitignore` 排除出公开仓库，但仍保留在本地工作目录中，不会被删除。
@@ -37,6 +37,7 @@ mcquest-guild/
 | --- | --- |
 | `quick_validate.py` 规范校验（针对安装副本） | ✅ 通过，退出码 0 |
 | `build_settlement.py` 手动运行（测试数据副本 → 全新输出路径） | ✅ 成功，结算卡内容检查通过（价格/预算/剩余/状态/称号/无残留占位符） |
+| `test_build_settlement_exceptions.py` 异常输入 harness | ✅ 17 项独立检查全部通过（输入异常/状态矛盾/价格一致性/待核实状态/防覆盖/HTML 转义） |
 | 项目级 Skill 自动加载 | ⬜ 未验证或当前环境不支持 |
 | Skill 运行时自动调用 `build_settlement.py` | ⬜ 未验证（当前为手动调用） |
 
@@ -68,11 +69,11 @@ mcquest-guild/
 - 对"AI Agent 调用真实业务数据"的最佳实践与安全边界感兴趣的开发者
 - 希望参考只读工具白名单、诚实呈现数据等模式构建自己 Skill 的参赛者
 
-## GitHub 项目使用说明（本地准备中）
+## GitHub 项目使用说明
 
+- 本项目已发布于 GitHub 公开仓库，并作为麦当劳程序员节创意开发大赛参赛作品提交报名
 - 浏览或克隆本仓库后，按上文「安装方式」将 Skill 复制到对应目录即可使用
 - 正式发行包（精简 ZIP）计划通过 GitHub Release 附件提供，不随仓库源码提交
-- 本项目**尚未发布到 GitHub**，本 README 不提供任何下载链接
 
 ## 安全边界
 
