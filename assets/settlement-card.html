@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>McQuest Guild 任务结算卡</title>
+<style>
+  /* 像素 RPG 公会风结算卡模板。
+     使用方法：将 {{PLACEHOLDER}} 替换为当次任务的真实核验数据。
+     本模板不包含任何脚本与远程依赖。 */
+  :root {
+    --gold: #f5b301;
+    --red: #b3202a;
+    --dark: #1d1a17;
+    --paper: #f7efd8;
+    --ink: #3a2f22;
+    --ok: #2e7d32;
+    --warn: #a3641a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--dark);
+    font-family: "Microsoft YaHei", "PingFang SC", monospace, sans-serif;
+    display: flex; justify-content: center; padding: 16px;
+    color: var(--ink);
+  }
+  .card {
+    width: 100%; max-width: 480px;
+    background: var(--paper);
+    border: 4px solid var(--gold);
+    box-shadow: 0 0 0 4px var(--red), 6px 6px 0 rgba(0,0,0,.45);
+    padding: 20px 18px;
+  }
+  .guild-header { text-align: center; border-bottom: 3px dashed var(--red); padding-bottom: 12px; }
+  .guild-header h1 { font-size: 20px; color: var(--red); letter-spacing: 2px; }
+  .guild-header .sub { font-size: 12px; color: var(--warn); margin-top: 4px; }
+  .quest-no {
+    display: inline-block; margin-top: 8px;
+    background: var(--red); color: var(--paper);
+    font-size: 13px; padding: 3px 12px; letter-spacing: 1px;
+  }
+  section { margin-top: 14px; }
+  h2 { font-size: 14px; color: var(--red); border-left: 5px solid var(--gold); padding-left: 8px; margin-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { border: 1px solid #c9b98a; padding: 5px 7px; text-align: left; }
+  th { background: #efe3c2; color: var(--red); white-space: nowrap; }
+  .status-line { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; }
+  .status-line .k { color: var(--warn); }
+  .title-badge {
+    text-align: center; margin-top: 14px;
+    background: var(--red); color: var(--gold);
+    padding: 10px; font-size: 17px; letter-spacing: 3px;
+    border: 2px solid var(--gold);
+  }
+  .disclaimer {
+    margin-top: 12px; font-size: 11px; color: var(--warn);
+    border-top: 2px dashed #c9b98a; padding-top: 8px; line-height: 1.6;
+  }
+  .sample-row td, .empty-row td { color: #a3946f; font-style: italic; text-align: center; }
+  @media (max-width: 420px) {
+    .card { padding: 14px 10px; }
+    .guild-header h1 { font-size: 17px; }
+    td, th { padding: 4px 5px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+  <!--
+    ══ 模板使用说明（静态模板，无自动填充）══
+    1. {{...}} 均为模板占位符；当前文件没有任何脚本或自动填充功能，
+       必须由人工或外部流程用本次任务的真实 MCP 返回数据替换后使用。
+    2. 不得新增模拟 MCP 数据、虚构的实时结果或未经验证的自动生成逻辑。
+
+    ══ 商品行填充规则 ══
+    - 正式生成结算卡时，将 <tbody id="item-rows"> 内的占位行整块替换为真实商品行，
+      每个商品一行，格式：
+      <tr><td>商品名</td><td>编码</td><td>菜单价(元)</td><td>核验价(元)</td></tr>
+    - 每个商品必须来自本次任务的真实 MCP 返回；核验价必须有本次成功的
+      calculate-price 结果作为依据，不得将菜单价直接当作核验价。
+    - 注意：裸文本占位符放在 <table> 内会被浏览器提升到表格外部渲染，
+      因此占位内容必须以完整 <tr> 行的形式替换，不得直接插入纯文本。
+
+    ══ 状态展示约定 ══
+    - 价格核验成功：{{TOTAL_PRICE}} 显示已核验总价，单位为元；
+      calculate-price 的价格字段以分为单位时，展示前除以 100。
+    - 价格核验失败或未执行：{{PRICE_STATUS}} 与 {{TOTAL_PRICE}} 显示"待核实"，
+      不得显示 0 元，不得判定挑战成功。
+    - 营养数据缺失或无法可靠匹配：{{NUTRITION_STATUS}} 显示"待核实"，
+      不得将缺失值当作 0 千卡。
+    - 未完成或已退出：{{QUEST_RESULT}} 如实显示任务状态（如"未完成"/"待核实"），
+      不授予未满足条件的称号。
+    - 没有实际解锁称号时：{{UNLOCKED_TITLES}} 填"暂无解锁称号"，不要虚构称号。
+
+    ══ 优惠券状态约定 ══
+    - 优惠券查询成功且返回空列表：{{COUPON_STATUS}} 只能显示
+      "本次查询未发现可用优惠券"等符合真实查询结果的说明，
+      不得暗示优惠券已使用或已成功抵扣。
+    - 优惠券查询未执行：显示"未查询"。
+  -->
+  <div class="card">
+    <header class="guild-header">
+      <h1>⚔ 麦麦冒险者公会 ⚔</h1>
+      <div class="sub">MCQUEST GUILD · 任务结算卡</div>
+      <div class="quest-no">悬赏 No.{{QUEST_NO}} · {{QUEST_NAME}}</div>
+    </header>
+
+    <section>
+      <h2>任务结果</h2>
+      <div class="status-line"><span class="k">任务状态</span><span>{{QUEST_RESULT}}</span></div>
+      <div class="status-line"><span class="k">挑战类型</span><span>{{CHALLENGE_TYPE}}</span></div>
+      <div class="status-line"><span class="k">探索门店</span><span>{{STORE_NAME}}（{{STORE_CODE}}）</span></div>
+      <div class="status-line"><span class="k">探索时间</span><span>{{QUEST_TIME}}</span></div>
+    </section>
+
+    <section>
+      <h2>实际商品（已核验）</h2>
+      <!--
+        商品行填充规则：将下方 <tbody id="item-rows"> 内的整块示例行替换为真实商品行，
+        每个真实核验过的商品一行，格式：
+        <tr><td>商品名</td><td>编码</td><td>菜单价(元)</td><td>核验价(元)</td></tr>
+        注意：裸文本占位符放在 <table> 内会被浏览器提升到表格外部渲染，因此占位符必须
+        以完整 <tr> 行的形式替换，不得直接插入纯文本。
+      -->
+      <table>
+        <thead>
+          <tr><th>商品</th><th>编码</th><th>菜单价(元)</th><th>核验价(元)</th></tr>
+        </thead>
+        <tbody id="item-rows">
+          <tr class="empty-row"><td colspan="4">等待任务数据，尚未生成正式结算</td></tr>
+        </tbody>
+      </table>
+      <div class="status-line"><span class="k">核验总价</span><span>{{TOTAL_PRICE}} 元</span></div>
+      <div class="status-line"><span class="k">玩家预算</span><span>{{BUDGET}} 元</span></div>
+    </section>
+
+    <section>
+      <h2>挑战状态</h2>
+      <div class="status-line"><span class="k">价格核验</span><span>{{PRICE_STATUS}}（来源：MCP calculate-price）</span></div>
+      <div class="status-line"><span class="k">优惠券</span><span>{{COUPON_STATUS}}</span></div>
+      <div class="status-line"><span class="k">热量鉴定</span><span>{{NUTRITION_STATUS}}（来源：MCP list-nutrition-foods）</span></div>
+    </section>
+
+    <section>
+      <h2>获得称号</h2>
+      <div class="title-badge">🏆 {{UNLOCKED_TITLES}}</div>
+    </section>
+
+    <div class="disclaimer">
+      ※ 本卡中的称号与成就均为 McQuest Guild 游戏内虚构设定，不是麦当劳官方奖励、优惠券或任何真实权益。<br>
+      ※ 卡中价格与商品信息均来自麦当劳 MCP 当次真实查询结果；如与门店实际不符，以门店为准。
+    </div>
+  </div>
+</body>
+</html>

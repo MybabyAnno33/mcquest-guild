@@ -1,0 +1,13 @@
+# McQuest Guild 仓库排除规则
+# 注意：不要排除 assets/settlement-card.html（正式模板）、references/、scripts/ 正式文件
+
+# 本机项目级安装副本（WorkBuddy Skill 安装目录）
+.workbuddy/
+
+# 开发测试产物（一次性人工验证卡片 / 脚本生成的卡片，本地保留、不入库）
+assets/settlement-card-test-No001.html
+assets/settlement-card-generated-No001.html
+
+# Python 缓存
+__pycache__/
+*.py[cod]

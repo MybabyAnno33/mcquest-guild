@@ -1,0 +1,24 @@
+{
+  "quest_no": "001",
+  "quest_name": "失落的金色补给",
+  "quest_result": "已完成（核验达成）",
+  "challenge_type": "预算挑战",
+  "store_name": "麦当劳深圳北站站内一店餐厅(B18/B19检票口上方)",
+  "store_code": "1420227",
+  "quest_time": "2026-10-23 13:12（算价核验时点）",
+  "items": [
+    {
+      "name": "巨无霸（数量 1）",
+      "code": "1100",
+      "menu_price": "29.0",
+      "verified_price": "29.0"
+    }
+  ],
+  "total_price_fen": 2900,
+  "budget_fen": 4000,
+  "discount_fen": 0,
+  "price_status": "✅ 已核验（calculate-price 返回 price=2900 分，÷100 = 29.00 元；discount=0 分）",
+  "coupon_status": "未查询",
+  "nutrition_status": "未查询（本轮为预算挑战，未启用热量判定）",
+  "unlocked_titles": ["初入公会", "寻宝学徒", "任务全勘"]
+}
