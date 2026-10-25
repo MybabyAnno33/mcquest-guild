@@ -10,8 +10,21 @@ HTML 结算卡副本。不修改模板本身，不覆盖任何已存在的文件
     python build_settlement.py --data <task.json> --output <out.html>
 
 数据约定（单位）：
-    - 所有价格字段以「分」为单位（整数），展示时由本脚本 ÷100 转为「元」。
+    - total_price_fen / budget_fen / discount_fen / remaining_fen 以「分」为单位
+      （整数），展示时由本脚本 ÷100 转为「元」。
+    - items[].menu_price / verified_price 为「元」字符串（与 MCP 返回口径一致，
+      如 "29.0"）；verified_price 必须来自当次成功的 calculate-price 结果。
+    - items[].quantity 为可选整数（≥1），缺省按 1 计，用于行合计一致性校验。
+    - total_price_fen 为 null 或缺省表示「价格待核实」：结算卡不得显示 0 元，
+      不得判定任务完成，不得授予"任务全勘"。
     - 缺失的优惠/营养数据用 "未查询" 表示；未核验的价格显示 "待核实"，绝不填 0。
+
+价格一致性校验：
+    - 商品行合计（Σ verified_price × quantity × 100）必须等于核验总价
+      total_price_fen；若提供 discount_fen，则允许 行合计 == total_price_fen + discount_fen。
+    - 任一行价格无法解析为数值时，校验结果为「无法校验」并输出警告，
+      与「校验通过」明确区分，不得误报。
+    - 菜单价（menu_price）仅为展示口径，不参与一致性校验。
 
 安全与边界：
     - 仅使用 Python 标准库；不发起任何网络请求，不调用 MCP，不产生业务副作用。
@@ -24,6 +37,7 @@ import html
 import json
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "assets" / "settlement-card.html"
@@ -34,7 +48,7 @@ DOC_PLACEHOLDER = "当次任务的真实核验数据"
 REQUIRED_FIELDS = [
     "quest_no", "quest_name", "quest_result", "challenge_type",
     "store_name", "store_code", "quest_time",
-    "items", "total_price_fen", "budget_fen",
+    "items", "budget_fen",
     "price_status", "coupon_status", "nutrition_status", "unlocked_titles",
 ]
 
@@ -78,6 +92,13 @@ def load_data(path):
     return data
 
 
+def _is_valid_fen(v):
+    """分字段允许 int（≥0，不含 bool）或 None。"""
+    if v is None:
+        return True
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
 def check_required(data):
     missing = [k for k in REQUIRED_FIELDS if k not in data]
     if missing:
@@ -87,9 +108,21 @@ def check_required(data):
               "price_status", "coupon_status", "nutrition_status"):
         if not isinstance(data[k], str) or not data[k].strip():
             fail("字段 {} 必须是非空字符串".format(k))
-    if not isinstance(data["total_price_fen"], int) or data["total_price_fen"] < 0:
-        fail("total_price_fen 必须是非负整数（单位：分）；价格未核验时不要提供该字段，脚本会显示“待核实”")
-    if not isinstance(data["budget_fen"], int) or data["budget_fen"] < 0:
+
+    # total_price_fen：整数（分）或 null/缺省（待核实）
+    total = data.get("total_price_fen")
+    if total is not None and (not isinstance(total, int) or isinstance(total, bool) or total < 0):
+        fail("total_price_fen 必须是非负整数（单位：分），或 null/缺省表示待核实；不得填 0 冒充已核验")
+
+    for k in ("budget_fen", "discount_fen", "remaining_fen"):
+        if not _is_valid_fen(data.get(k)):
+            fail("{} 必须是非负整数（单位：分）或 null".format(k))
+    if total is None and data.get("discount_fen") is not None:
+        fail("总价待核实时不得提供 discount_fen（无核验依据的优惠金额不得展示）")
+    if total is None and data.get("remaining_fen") is not None:
+        fail("总价待核实时不得提供 remaining_fen（剩余预算无法计算，不得伪造）")
+
+    if not isinstance(data["budget_fen"], int) or isinstance(data["budget_fen"], bool) or data["budget_fen"] < 0:
         fail("budget_fen 必须是非负整数（单位：分）")
     if not isinstance(data["items"], list):
         fail("items 必须是数组")
@@ -104,6 +137,8 @@ def check_status_rules(data):
     """轻量一致性校验：状态与称号的明显矛盾要报错，不生成伪成功结果。"""
     result = data["quest_result"]
     titles = data["unlocked_titles"]
+    total = data.get("total_price_fen")
+
     if ("未完成" in result or "退出" in result) and ("通关" in result or result.strip().startswith("已完成")):
         fail("quest_result 同时包含“未完成/退出”与“已完成/通关”，状态矛盾")
     if "退出" in result and "任务全勘" in titles:
@@ -112,6 +147,53 @@ def check_status_rules(data):
         fail("优惠券未查询时不得授予“无券勇者”")
     if "待核实" in data["price_status"] and "任务全勘" in titles:
         fail("价格待核实时不得授予“任务全勘”")
+
+    # 价格待核实（total 缺省/null）时的额外硬约束
+    if total is None:
+        if "已完成" in result or "通关" in result:
+            fail("总价待核实时不得将任务标记为“已完成/通关”")
+        if "任务全勘" in titles:
+            fail("总价待核实时不得授予“任务全勘”（其解锁条件要求核验成功且满足目标）")
+        if "无券勇者" in titles:
+            fail("总价待核实时不得授予“无券勇者”（其解锁条件要求玩家最终达成挑战）")
+        if "已核验" in data["price_status"]:
+            fail("总价待核实时 price_status 不得宣称“已核验”（与缺省的总价矛盾）")
+
+
+def check_price_consistency(data):
+    """商品行合计与核验总价的一致性校验。
+
+    返回 "pass"（校验通过）或 "skip"（无法校验）；不一致时直接 fail。
+    menu_price 仅为展示口径，不参与本校验。
+    """
+    total = data.get("total_price_fen")
+    if total is None:
+        warn("价格一致性：总价待核实，跳过行合计校验")
+        return "skip"
+
+    discount = data.get("discount_fen")
+    row_sum = Decimal("0")
+    for i, it in enumerate(data["items"]):
+        qty = it.get("quantity", 1)
+        try:
+            price = Decimal(str(it["verified_price"]))
+        except (InvalidOperation, ValueError):
+            warn("价格一致性：无法校验（items[{}].verified_price={!r} 不是可解析的数值）"
+                 "——本卡未做行合计核对，不得宣称一致性校验通过".format(i, it["verified_price"]))
+            return "skip"
+        if price < 0:
+            fail("items[{}].verified_price 不得为负数".format(i))
+        row_sum += price * qty * 100
+
+    expected = total + (discount if discount is not None else 0)
+    if row_sum != Decimal(expected):
+        fail("价格不一致：商品行合计 {} 分 ≠ 核验总价 {} 分{}（若商品数量大于 1，请提供结构化 quantity 字段）".format(
+            int(row_sum), total,
+            " + 优惠 {} 分".format(discount) if discount is not None else ""))
+    print("[校验] 价格一致性：通过（商品行合计 {} 分 = 核验总价 {} 分{}）".format(
+        int(row_sum), total,
+        " + 优惠 {} 分".format(discount) if discount is not None else ""))
+    return "pass"
 
 
 def build_items_rows(items):
@@ -134,10 +216,8 @@ def build_items_rows(items):
 
 
 def build_values(data):
-    total = data["total_price_fen"]
+    total = data.get("total_price_fen")
     budget = data["budget_fen"]
-    discount = data.get("discount_fen", OPTIONAL_DEFAULTS["discount_fen"])
-    remaining = data.get("remaining_fen", OPTIONAL_DEFAULTS["remaining_fen"])
 
     values = {
         "QUEST_NO": html.escape(data["quest_no"]),
@@ -147,7 +227,7 @@ def build_values(data):
         "STORE_NAME": html.escape(data["store_name"]),
         "STORE_CODE": html.escape(data["store_code"]),
         "QUEST_TIME": html.escape(data["quest_time"]),
-        "TOTAL_PRICE": fen_to_yuan(total),
+        "TOTAL_PRICE": fen_to_yuan(total) if total is not None else "待核实",
         "BUDGET": fen_to_yuan(budget),
         "PRICE_STATUS": html.escape(data["price_status"]),
         "COUPON_STATUS": html.escape(data["coupon_status"]),
@@ -155,14 +235,18 @@ def build_values(data):
         "UNLOCKED_TITLES": html.escape(" · ".join(data["unlocked_titles"]) if data["unlocked_titles"] else "暂无解锁称号"),
     }
 
-    if remaining is None:
-        remaining = budget - total
-    if remaining < 0:
-        warn("剩余预算为负（超出预算 {} 分），请确认挑战判定".format(-remaining))
-    return values, remaining, discount
+    if total is None:
+        remaining = None  # 待核实：不显示任何剩余预算数值
+    else:
+        remaining = data.get("remaining_fen")
+        if remaining is None:
+            remaining = budget - total
+        if remaining < 0:
+            warn("剩余预算为负（超出预算 {} 分），请确认挑战判定".format(-remaining))
+    return values, remaining
 
 
-def render(template, values, items_rows, remaining, discount):
+def render(template, values, items_rows, remaining):
     out = template
 
     # 1) 剥离模板中的 HTML 注释（使用说明与填充规则；生成卡中已无意义）。
@@ -182,11 +266,18 @@ def render(template, values, items_rows, remaining, discount):
     budget_line = '<div class="status-line"><span class="k">玩家预算</span><span>{{BUDGET}} 元</span></div>'
     if budget_line not in out:
         fail("模板中未找到“玩家预算”状态行，无法追加剩余预算")
-    remaining_yuan = fen_to_yuan(remaining) if remaining is not None else "待核实"
+    if remaining is None:
+        remaining_html = html.escape("待核实")  # 不显示任何数值，避免把未知当 0
+    else:
+        remaining_html = html.escape(fen_to_yuan(remaining)) + " 元"
     replacement = ('<div class="status-line"><span class="k">玩家预算</span><span>{{BUDGET}} 元</span></div>\n'
                    '      <div class="status-line"><span class="k">剩余预算</span><span>'
-                   + html.escape(remaining_yuan) + ' 元</span></div>')
+                   + remaining_html + '</span></div>')
     out = out.replace(budget_line, replacement)
+
+    # 3b) 总价待核实时，模板中的 "{{TOTAL_PRICE}} 元" 需整体替换，避免出现"待核实 元"
+    if values["TOTAL_PRICE"] == "待核实":
+        out = out.replace("{{TOTAL_PRICE}} 元", "待核实")
 
     # 4) CSS 注释中的文档性占位符
     out = out.replace("{{PLACEHOLDER}}", DOC_PLACEHOLDER)
@@ -196,16 +287,6 @@ def render(template, values, items_rows, remaining, discount):
         out = out.replace("{{" + key + "}}", values[key])
 
     # 6) 残留占位符检查：任何 {{...}} 残留都视为错误
-    leftover = re.findall(r"\{\{[^}]{1,40}\}\}", out)
-    if leftover:
-        fail("生成结果中仍残留占位符: " + ", ".join(sorted(set(leftover))))
-    return out
-
-    # 4) 数据占位符替换
-    for key in PLACEHOLDER_ORDER:
-        out = out.replace("{{" + key + "}}", values[key])
-
-    # 5) 残留占位符检查：任何 {{...}} 残留都视为错误
     leftover = re.findall(r"\{\{[^}]{1,40}\}\}", out)
     if leftover:
         fail("生成结果中仍残留占位符: " + ", ".join(sorted(set(leftover))))
@@ -228,20 +309,22 @@ def main():
     data = load_data(args.data)
     check_required(data)
     check_status_rules(data)
+    consistency = check_price_consistency(data)
 
     with open(TEMPLATE_PATH, encoding="utf-8") as f:
         template = f.read()
 
     items_rows = build_items_rows(data["items"])
-    values, remaining, discount = build_values(data)
-    result = render(template, values, items_rows, remaining, discount)
+    values, remaining = build_values(data)
+    result = render(template, values, items_rows, remaining)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(result)
 
     print("[完成] 结算卡已生成: {}".format(out_path))
-    print("       商品行数: {}；模板与既有文件均未被修改。".format(len(data["items"])))
+    print("       商品行数: {}；价格一致性: {}；模板与既有文件均未被修改。".format(
+        len(data["items"]), {"pass": "通过", "skip": "无法校验（见警告）"}[consistency]))
 
 
 if __name__ == "__main__":

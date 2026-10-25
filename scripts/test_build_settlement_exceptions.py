@@ -169,12 +169,14 @@ def main():
                r.returncode, "非负整数" in (r.stdout + r.stderr), not out7a.exists()))
 
     # 7b 预算 < 核验价（超预算）→ 允许生成但必须出现明确警告，不得静默
+    #    注：商品行数据同步改为 50.0 元，保持行合计与核验总价一致（本场景只测超预算警告）
     sb = root / "s7b"
     sb.mkdir()
     script = sandbox(sb)
-    d = dict(base_data)
+    d = json.loads(json.dumps(base_data))
     d["total_price_fen"] = 5000
     d["budget_fen"] = 4000
+    d["items"][0]["verified_price"] = "50.0"
     dp = sb / "d.json"
     dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
     out7b = sb / "out.html"
@@ -185,6 +187,171 @@ def main():
     record("7b 超预算明确提示不静默", ok7b,
            "退出码={}，含'超出预算'警告={}，输出含核验价 50.00 与剩余 -10.00={}".format(
                r.returncode, warned, "50.00" in text and "-10.00" in text))
+
+    # ── 场景 8：价格不一致（行合计 ≠ 核验总价）→ 拒绝生成 ──
+    sb = root / "s8"
+    sb.mkdir()
+    script = sandbox(sb)
+    d = json.loads(json.dumps(base_data))
+    d["total_price_fen"] = 3100  # 行合计 2900 分 ≠ 3100 分
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    out8 = sb / "out.html"
+    r = run(script, dp, out8)
+    combined8 = r.stdout + r.stderr
+    ok = (r.returncode != 0 and "价格不一致" in combined8 and not out8.exists()
+          and "quantity" in combined8)
+    record("8 价格不一致拒绝", ok,
+           "退出码={}，错误信息含'价格不一致'={}，含 quantity 数量提示={}，输出文件未产生={}".format(
+               r.returncode, "价格不一致" in combined8, "quantity" in combined8, not out8.exists()))
+
+    # ── 场景 9：行价格不可解析 → 明确"无法校验"，不误报为校验通过 ──
+    sb = root / "s9"
+    sb.mkdir()
+    script = sandbox(sb)
+    d = json.loads(json.dumps(base_data))
+    d["items"][0]["verified_price"] = "29.0（含包装费）"
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    out9 = sb / "out.html"
+    r = run(script, dp, out9)
+    text = out9.read_text(encoding="utf-8") if out9.exists() else ""
+    ok = (r.returncode == 0 and out9.exists()
+          and "无法校验" in (r.stdout + r.stderr)
+          and "价格一致性：通过" not in (r.stdout + r.stderr))
+    record("9 行价格不可解析标记无法校验", ok,
+           "退出码={}，含'无法校验'警告={}，未误报'校验通过'={}，输出存在={}".format(
+               r.returncode, "无法校验" in (r.stdout + r.stderr),
+               "价格一致性：通过" not in (r.stdout + r.stderr), out9.exists()))
+
+    # ── 场景 10：待核实状态（total 缺省）→ 正常生成，不显示 0 元/虚假余额 ──
+    sb = root / "s10"
+    sb.mkdir()
+    script = sandbox(sb)
+    d = json.loads(json.dumps(base_data))
+    del d["total_price_fen"]
+    del d["discount_fen"]
+    d["price_status"] = "⏳ 待核实（价格核验未执行）"
+    d["quest_result"] = "未完成（玩家主动退出）"
+    d["unlocked_titles"] = ["初入公会"]
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    out10 = sb / "out.html"
+    r = run(script, dp, out10)
+    text = out10.read_text(encoding="utf-8") if out10.exists() else ""
+    ok = (r.returncode == 0 and out10.exists()
+          and "待核实" in text and "待核实 元" not in text
+          and "29.00" not in text and "-10.00" not in text
+          and "已完成" not in text and "任务全勘" not in text
+          and "{{" not in text)
+    record("10 待核实状态正常生成", ok,
+           "退出码={}，输出含'待核实'={}，无'待核实 元'={}，无 29.00/-10.00 数值={}，"
+           "无已完成/任务全勘={}，无残留占位符={}".format(
+               r.returncode, "待核实" in text, "待核实 元" not in text,
+               "29.00" not in text and "-10.00" not in text,
+               "已完成" not in text and "任务全勘" not in text, "{{" not in text))
+
+    # ── 场景 11：待核实 + 已完成 / 待核实 + 任务全勘 → 均拒绝 ──
+    for tag, mutate in (
+        ("11a 待核实+已完成", lambda d: d.update({"quest_result": "已完成（核验达成）"})),
+        ("11b 待核实+任务全勘", lambda d: d.update({"unlocked_titles": ["初入公会", "任务全勘"]})),
+    ):
+        sb = root / ("s" + tag.split()[0])
+        sb.mkdir()
+        script = sandbox(sb)
+        d = json.loads(json.dumps(base_data))
+        del d["total_price_fen"]
+        del d["discount_fen"]
+        d["price_status"] = "⏳ 待核实（价格核验未执行）"
+        d["quest_result"] = "未完成（玩家主动退出）"
+        d["unlocked_titles"] = ["初入公会"]
+        mutate(d)
+        dp = sb / "d.json"
+        dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        out11 = sb / "out.html"
+        r = run(script, dp, out11)
+        combined = r.stdout + r.stderr
+        ok = r.returncode != 0 and not out11.exists() and ("不得" in combined or "矛盾" in combined)
+        record(tag + " 拒绝", ok,
+               "退出码={}，输出文件未产生={}，错误信息含拒绝理由={}".format(
+                   r.returncode, not out11.exists(), "不得" in combined or "矛盾" in combined))
+
+    # ── 场景 12：数量聚合（quantity=2，单价×数量=总价）→ 校验通过 ──
+    sb = root / "s12"
+    sb.mkdir()
+    script = sandbox(sb)
+    d = json.loads(json.dumps(base_data))
+    d["items"][0]["quantity"] = 2
+    d["items"][0]["verified_price"] = "14.5"  # 14.5 元 × 2 = 29 元 = 2900 分
+    d["items"][0]["name"] = "麦乐鸡（数量 2）"
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    out12 = sb / "out.html"
+    r = run(script, dp, out12)
+    ok = r.returncode == 0 and out12.exists() and "价格一致性：通过" in (r.stdout + r.stderr)
+    record("12 数量聚合一致通过", ok,
+           "退出码={}，输出存在={}，含'价格一致性：通过'={}".format(
+               r.returncode, out12.exists(), "价格一致性：通过" in (r.stdout + r.stderr)))
+
+    # ── 场景 13：No.001 正常样例仍成功生成（回归保护）──
+    sb = root / "s13"
+    sb.mkdir()
+    script = sandbox(sb)
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(base_data, ensure_ascii=False), encoding="utf-8")
+    out13 = sb / "out.html"
+    r = run(script, dp, out13)
+    text = out13.read_text(encoding="utf-8") if out13.exists() else ""
+    ok = (r.returncode == 0 and out13.exists()
+          and "价格一致性：通过" in (r.stdout + r.stderr)
+          and "29.00" in text and "40.00" in text and "11.00" in text
+          and "{{" not in text)
+    record("13 No.001 样例回归通过", ok,
+           "退出码={}，输出存在={}，含一致性通过={}?，含 29.00/40.00/11.00={}，无残留占位符={}".format(
+               r.returncode, out13.exists(),
+               "价格一致性：通过" in (r.stdout + r.stderr),
+               "29.00" in text and "40.00" in text and "11.00" in text, "{{" not in text))
+
+    # ── 场景 14a：待核实 + 无券勇者 → 拒绝（称号解锁要求挑战达成）──
+    sb = root / "s14a"
+    sb.mkdir()
+    script = sandbox(sb)
+    d = json.loads(json.dumps(base_data))
+    del d["total_price_fen"]
+    del d["discount_fen"]
+    d["price_status"] = "⏳ 待核实（价格核验未执行）"
+    d["quest_result"] = "未完成（玩家主动退出）"
+    d["unlocked_titles"] = ["初入公会", "无券勇者"]
+    d["coupon_status"] = "本次查询未发现可用优惠券"  # 券查询真实为空，但挑战未达成
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    out14a = sb / "out.html"
+    r = run(script, dp, out14a)
+    combined = r.stdout + r.stderr
+    ok = r.returncode != 0 and not out14a.exists() and "无券勇者" in combined
+    record("14a 待核实+无券勇者 拒绝", ok,
+           "退出码={}，输出文件未产生={}，错误信息含'无券勇者'={}".format(
+               r.returncode, not out14a.exists(), "无券勇者" in combined))
+
+    # ── 场景 14b：待核实 + price_status 自称"已核验" → 拒绝 ──
+    sb = root / "s14b"
+    sb.mkdir()
+    script = sandbox(sb)
+    d = json.loads(json.dumps(base_data))
+    del d["total_price_fen"]
+    del d["discount_fen"]
+    d["price_status"] = "✅ 已核验（calculate-price 返回 price=2900 分）"
+    d["quest_result"] = "未完成（玩家主动退出）"
+    d["unlocked_titles"] = ["初入公会"]
+    dp = sb / "d.json"
+    dp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    out14b = sb / "out.html"
+    r = run(script, dp, out14b)
+    combined = r.stdout + r.stderr
+    ok = r.returncode != 0 and not out14b.exists() and "已核验" in combined
+    record("14b 待核实+已核验状态 拒绝", ok,
+           "退出码={}，输出文件未产生={}，错误信息含'已核验'={}".format(
+               r.returncode, not out14b.exists(), "已核验" in combined))
 
     shutil.rmtree(root, ignore_errors=True)
 
